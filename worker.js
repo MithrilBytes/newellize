@@ -98,6 +98,7 @@ function optimizerWorkerMain(self) {
         iter: s.iter,
         accepted: s.accepted,
         colorErr: colorError(s),
+        progress: Math.min(1, (performance.now() - t0) / budgetMs),
       });
     };
 

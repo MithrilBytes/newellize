@@ -21,9 +21,14 @@ python3 -m http.server 4173
 2. Initial assignment: the k-th brightest source pixel goes to the k-th brightest cell.
 3. A Web Worker refines it with millions of pair swaps and 3-cycle rotations under
    threshold accepting. A move survives if it lowers weighted RGB error plus
-   proximity importance times distance squared.
-4. The permutation is animated: each pixel flies from home to its assigned cell along
-   a randomized arc. While one sample plays, the next result computes in the background.
+   proximity importance times distance squared. The solver never draws to the stage,
+   you only see a progress figure while the raw frame holds.
+4. The permutation plays as a physics morph, modeled on obamify's morph_sim: every
+   pixel starts at once, pulled toward its cell by a force that ramps cubically with
+   time (per pixel ramp rate, so arrivals stagger naturally), with damping and a
+   speed cap. The raw sample stays underneath as a ghost so the frame keeps full
+   coverage while pixels flow. obamify does that part with a GPU Voronoi jump flood.
+   While one sample plays, the next result computes in the background.
 
 The proximity slider is straight from obamify. At 0 you get maximum Gabe. At 100 the
 pixels barely leave home and only a faint Gabe haunts the image.

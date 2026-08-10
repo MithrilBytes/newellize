@@ -265,7 +265,8 @@ function onWorkerMsg(e) {
   if (!rec) return; // stale
   rec.perm = m.perm;
   rec.lastStats = m;
-  if (m.runId === visibleRunId) { paintMosaic(rec); updateStats(m, rec); }
+  // solver progress is numbers only; the stage keeps showing the raw sample
+  if (m.runId === visibleRunId) updateStats(m, rec, m.type === 'done');
   if (m.type === 'done') { runs.delete(m.runId); rec.resolve(rec); }
 }
 
@@ -311,44 +312,57 @@ function startQuips() {
 }
 function stopQuips() { clearInterval(state.quipTimer); state.quipTimer = 0; }
 
-function updateStats(m, rec) {
+function updateStats(m, rec, done) {
   if (!m) { ui.stats.textContent = ''; return; }
-  const r = Math.max(0, 100 * (1 - Math.sqrt(m.colorErr / MAX_COLOR_ERR)));
-  ui.stats.textContent =
-    `${SAMPLES[rec.idx].name} · ${(m.iter / 1e6).toFixed(1)}M swaps · resemblance ${r.toFixed(1)}%`;
+  const name = SAMPLES[rec.idx].name;
+  if (!done) {
+    ui.stats.textContent =
+      `${name} · assigning pixels ${Math.round((m.progress || 0) * 100)}% · ${(m.iter / 1e6).toFixed(1)}M swaps`;
+  } else {
+    const r = Math.max(0, 100 * (1 - Math.sqrt(m.colorErr / MAX_COLOR_ERR)));
+    ui.stats.textContent =
+      `${name} · ${(m.iter / 1e6).toFixed(1)}M swaps · resemblance ${r.toFixed(1)}%`;
+  }
 }
 
 // ---------------------------------------------------------------- animation
-const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-const BG32 = 0xff000000 | (0x2d << 16) | (0x20 << 8) | 0x16; // #16202d
-
+/*
+ * Physics morph, modeled on obamify's morph_sim: every pixel is a particle
+ * that starts moving at frame zero, pulled toward its assigned cell by a
+ * force that ramps cubically with time (per pixel ramp rate, so arrivals
+ * stagger naturally), with velocity damping and a speed cap. The raw sample
+ * stays underneath as a ghost so the frame keeps full coverage while pixels
+ * flow (obamify gets this from a Voronoi jump flood on the GPU).
+ */
 function buildAnim(rec) {
   const { N, cell, S, perm, colors32 } = rec;
   const n = N * N;
   const a = {
     sx: new Float32Array(n), sy: new Float32Array(n),
-    tx: new Float32Array(n), ty: new Float32Array(n),
-    cx: new Float32Array(n), cy: new Float32Array(n),
-    delay: new Float32Array(n), dur: new Float32Array(n),
+    dx: new Float32Array(n), dy: new Float32Array(n),
+    px: new Float32Array(n), py: new Float32Array(n),
+    vx: new Float32Array(n), vy: new Float32Array(n),
+    force: new Float32Array(n),
+    settled: new Uint8Array(n),
     col: new Uint32Array(n),
-    total: 0, S, cell, n,
+    base: new Uint32Array(S * S),
+    S, cell, n,
   };
   for (let c = 0; c < n; c++) {
     const p = perm[c];
-    const sx = (p % N) * cell, sy = ((p / N) | 0) * cell;
-    const tx = (c % N) * cell, ty = ((c / N) | 0) * cell;
-    a.sx[c] = sx; a.sy[c] = sy; a.tx[c] = tx; a.ty[c] = ty;
-    const dx = tx - sx, dy = ty - sy;
-    const dist = Math.hypot(dx, dy);
-    let px = 0, py = 0;
-    if (dist > 0) { px = -dy / dist; py = dx / dist; }
-    const amp = (Math.random() - 0.5) * 0.6 * dist;
-    a.cx[c] = sx + dx / 2 + px * amp;
-    a.cy[c] = sy + dy / 2 + py * amp;
-    a.delay[c] = Math.random() * 1600;
-    a.dur[c] = 2400 + Math.random() * 1000;
-    a.total = Math.max(a.total, a.delay[c] + a.dur[c]);
+    a.sx[c] = (p % N) * cell; a.sy[c] = ((p / N) | 0) * cell;
+    a.dx[c] = (c % N) * cell; a.dy[c] = ((c / N) | 0) * cell;
+    a.force[c] = 0.55 + Math.random() * 1.15;
     a.col[c] = colors32[p];
+  }
+  // ghost underlay: the raw sample at grid resolution, every pixel at home
+  for (let p = 0; p < n; p++) {
+    const col = colors32[p];
+    let off = ((p / N) | 0) * cell * S + (p % N) * cell;
+    for (let yy = 0; yy < cell; yy++) {
+      for (let xx = 0; xx < cell; xx++) a.base[off + xx] = col;
+      off += S;
+    }
   }
   a.image = stageCtx.createImageData(S, S);
   a.u32 = new Uint32Array(a.image.data.buffer);
@@ -365,20 +379,49 @@ function playAnim(onEnd) {
   if (!a) { if (onEnd) onEnd(); return; }
   stopAnim();
   state.animating = true;
-  const t0 = performance.now();
+  const { S, cell, n } = a;
+  a.px.set(a.sx); a.py.set(a.sy);
+  a.vx.fill(0); a.vy.fill(0);
+  a.settled.fill(0);
+  const MAX_V = cell * 2.6;
+  const DAMP = 0.965;
+  const SNAP = cell * 0.45;
+  const SNAP_SPEED2 = MAX_V * MAX_V * 0.2;
+  let elapsed = 0;
+  let settledCount = 0;
+  let acc = 0;
+  let last = performance.now();
 
   const frame = (now) => {
-    const t = now - t0;
-    const { S, cell, n } = a;
-    a.u32.fill(BG32);
+    acc += Math.min(100, now - last);
+    last = now;
+    while (acc >= 16.667) { // fixed 60Hz steps, display rate independent
+      acc -= 16.667;
+      elapsed += 1 / 60;
+      for (let c = 0; c < n; c++) {
+        if (a.settled[c]) continue;
+        const ddx = a.dx[c] - a.px[c], ddy = a.dy[c] - a.py[c];
+        const dist = Math.sqrt(ddx * ddx + ddy * ddy);
+        let vX = a.vx[c], vY = a.vy[c];
+        if (dist < SNAP && vX * vX + vY * vY < SNAP_SPEED2) {
+          a.px[c] = a.dx[c]; a.py[c] = a.dy[c];
+          a.settled[c] = 1; settledCount++;
+          continue;
+        }
+        const t = elapsed * a.force[c];
+        const fac = Math.min(t * t * t, 1000);
+        const g = fac / (S * 60);
+        vX = (vX + ddx * dist * g) * DAMP;
+        vY = (vY + ddy * dist * g) * DAMP;
+        const sp = Math.sqrt(vX * vX + vY * vY);
+        if (sp > MAX_V) { const k = MAX_V / sp; vX *= k; vY *= k; }
+        a.vx[c] = vX; a.vy[c] = vY;
+        a.px[c] += vX; a.py[c] += vY;
+      }
+    }
+    a.u32.set(a.base);
     for (let c = 0; c < n; c++) {
-      let k = (t - a.delay[c]) / a.dur[c];
-      if (k < 0) k = 0; else if (k > 1) k = 1;
-      const e = easeInOutCubic(k);
-      const mx1 = a.sx[c] + (a.cx[c] - a.sx[c]) * e, my1 = a.sy[c] + (a.cy[c] - a.sy[c]) * e;
-      const mx2 = a.cx[c] + (a.tx[c] - a.cx[c]) * e, my2 = a.cy[c] + (a.ty[c] - a.cy[c]) * e;
-      let ix = Math.round(mx1 + (mx2 - mx1) * e);
-      let iy = Math.round(my1 + (my2 - my1) * e);
+      let ix = Math.round(a.px[c]), iy = Math.round(a.py[c]);
       if (ix < 0) ix = 0; else if (ix > S - cell) ix = S - cell;
       if (iy < 0) iy = 0; else if (iy > S - cell) iy = S - cell;
       const col = a.col[c];
@@ -389,11 +432,11 @@ function playAnim(onEnd) {
       }
     }
     stageCtx.putImageData(a.image, 0, 0);
-    if (t < a.total + 150) {
+    if (settledCount < n && elapsed < 8) {
       state.animRAF = requestAnimationFrame(frame);
     } else {
       state.animating = false;
-      if (state.cur) paintMosaic(state.cur); // crisp, gap-free final frame
+      if (state.cur) paintMosaic(state.cur); // crisp final frame
       if (onEnd) onEnd();
     }
   };
@@ -423,7 +466,7 @@ async function runCycle(idx, preRec) {
     rec = preRec;
     visibleRunId = rec.runId;
     setStageSize(rec);
-    updateStats(rec.lastStats, rec);
+    updateStats(rec.lastStats, rec, true);
   } else {
     rec = await startRun(idx, true).promise;
     if (token !== cycleToken || !rec) return;
