@@ -2,10 +2,11 @@
 
 Turn anything into the President of Valve.
 
-A parody of [obamify](https://github.com/Spu7Nix/obamify) by Spu7Nix. The app cycles
-through a set of sample images and rearranges the pixels of each one into Gabe Newell,
-like a gif that plays itself. Every pixel of a result is a pixel of the source image,
-used exactly once. Nothing added, nothing lost, only rearranged.
+A parody of [obamify](https://github.com/Spu7Nix/obamify) by Spu7Nix. The app
+rearranges the pixels of sample images into Gabe Newell. Pick a sample, press play,
+check reverse to run the morph backward, or set auto to loop the whole set like a gif
+that plays itself. Every pixel of a result is a pixel of the source image, used
+exactly once. Nothing added, nothing lost, only rearranged.
 
 ## Run
 
@@ -28,7 +29,7 @@ python3 -m http.server 4173
    time (per pixel ramp rate, so arrivals stagger naturally), with damping and a
    speed cap. The raw sample stays underneath as a ghost so the frame keeps full
    coverage while pixels flow. obamify does that part with a GPU Voronoi jump flood.
-   While one sample plays, the next result computes in the background.
+   Every sample precomputes in the background, so switching presets is instant.
 
 The proximity slider is straight from obamify. At 0 you get maximum Gabe. At 100 the
 pixels barely leave home and only a faint Gabe haunts the image.

@@ -5,7 +5,7 @@ const $ = (id) => document.getElementById(id);
 const ui = {
   stage: $('stage'), strip: $('strip'),
   res: $('resSel'), prox: $('proxSlider'), proxOut: $('proxOut'), effort: $('effortSel'),
-  auto: $('autoChk'), replay: $('replayBtn'), png: $('pngBtn'), vid: $('vidBtn'),
+  auto: $('autoChk'), play: $('playBtn'), reverse: $('reverseChk'), png: $('pngBtn'), vid: $('vidBtn'),
   quip: $('quip'), stats: $('stats'),
 };
 const stageCtx = ui.stage.getContext('2d');
@@ -334,7 +334,7 @@ function updateStats(m, rec, done) {
  * stays underneath as a ghost so the frame keeps full coverage while pixels
  * flow (obamify gets this from a Voronoi jump flood on the GPU).
  */
-function buildAnim(rec) {
+function buildAnim(rec, reverse) {
   const { N, cell, S, perm, colors32 } = rec;
   const n = N * N;
   const a = {
@@ -346,19 +346,21 @@ function buildAnim(rec) {
     settled: new Uint8Array(n),
     col: new Uint32Array(n),
     base: new Uint32Array(S * S),
-    S, cell, n,
+    reverse: !!reverse, S, cell, n,
   };
   for (let c = 0; c < n; c++) {
     const p = perm[c];
-    a.sx[c] = (p % N) * cell; a.sy[c] = ((p / N) | 0) * cell;
-    a.dx[c] = (c % N) * cell; a.dy[c] = ((c / N) | 0) * cell;
-    a.force[c] = 0.55 + Math.random() * 1.15;
+    const hx = (p % N) * cell, hy = ((p / N) | 0) * cell; // pixel's home
+    const gx = (c % N) * cell, gy = ((c / N) | 0) * cell; // assigned cell
+    if (reverse) { a.sx[c] = gx; a.sy[c] = gy; a.dx[c] = hx; a.dy[c] = hy; }
+    else { a.sx[c] = hx; a.sy[c] = hy; a.dx[c] = gx; a.dy[c] = gy; }
+    a.force[c] = 0.18 + Math.random() * 0.4; // wide ramp spread, the change stays slow
     a.col[c] = colors32[p];
   }
-  // ghost underlay: the raw sample at grid resolution, every pixel at home
-  for (let p = 0; p < n; p++) {
-    const col = colors32[p];
-    let off = ((p / N) | 0) * cell * S + (p % N) * cell;
+  // ghost underlay = the start state, so the frame keeps full coverage
+  for (let c = 0; c < n; c++) {
+    const col = a.col[c];
+    let off = (a.sy[c] * S + a.sx[c]) | 0;
     for (let yy = 0; yy < cell; yy++) {
       for (let xx = 0; xx < cell; xx++) a.base[off + xx] = col;
       off += S;
@@ -383,7 +385,7 @@ function playAnim(onEnd) {
   a.px.set(a.sx); a.py.set(a.sy);
   a.vx.fill(0); a.vy.fill(0);
   a.settled.fill(0);
-  const MAX_V = cell * 2.6;
+  const MAX_V = cell * 1.15; // slow glide, the whole change reads gradually
   const DAMP = 0.965;
   const SNAP = cell * 0.45;
   const SNAP_SPEED2 = MAX_V * MAX_V * 0.2;
@@ -432,26 +434,50 @@ function playAnim(onEnd) {
       }
     }
     stageCtx.putImageData(a.image, 0, 0);
-    if (settledCount < n && elapsed < 8) {
+    if (settledCount < n && elapsed < 15) {
       state.animRAF = requestAnimationFrame(frame);
     } else {
       state.animating = false;
-      if (state.cur) paintMosaic(state.cur); // crisp final frame
+      if (state.cur) { // crisp final frame
+        if (a.reverse) showRaw(state.cur); else paintMosaic(state.cur);
+      }
       if (onEnd) onEnd();
     }
   };
   state.animRAF = requestAnimationFrame(frame);
 }
-const playAnimP = () => new Promise((res) => playAnim(res));
-
 // ---------------------------------------------------------------- cycle
+/*
+ * obamify.com interaction model: every sample is precomputed in the
+ * background (the pump), picking one shows the finished result instantly,
+ * and play/reverse run the morph on demand. auto loops the whole set.
+ */
 let cycleToken = 0, curIdx = 0, idle = false;
+const cache = new Map();
+const keyOf = (idx) => `${idx}|${ui.res.value}|${ui.prox.value}|${ui.effort.value}`;
+let queue = [];
+let bgBusy = false;
 
 function markStrip(idx) {
   [...ui.strip.children].forEach((el, i) => el.classList.toggle('sel', i === idx));
 }
 
-async function runCycle(idx, preRec) {
+async function pump() {
+  if (bgBusy) return;
+  bgBusy = true;
+  while (queue.length) {
+    while (runs.size > 0) await sleep(200); // never compete with a visible solve
+    const idx = queue.shift();
+    const k = keyOf(idx);
+    if (cache.has(k)) continue;
+    const rec = await startRun(idx, false).promise;
+    if (rec) cache.set(k, rec);
+    else { queue.push(idx); await sleep(300); } // superseded, retry later
+  }
+  bgBusy = false;
+}
+
+async function runCycle(idx, opts = {}) {
   if (state.recording) return;
   const token = ++cycleToken;
   idle = false;
@@ -459,62 +485,66 @@ async function runCycle(idx, preRec) {
   markStrip(idx);
   stopAnim();
   state.anim = null;
-  for (const b of [ui.replay, ui.png, ui.vid]) b.disabled = true;
 
-  let rec;
-  if (preRec && preRec.perm && preRec.idx === idx && preRec.N === +ui.res.value) {
-    rec = preRec;
-    visibleRunId = rec.runId;
-    setStageSize(rec);
-    updateStats(rec.lastStats, rec, true);
-  } else {
+  let rec = cache.get(keyOf(idx));
+  if (!rec) {
+    for (const b of [ui.play, ui.png, ui.vid]) b.disabled = true;
+    const k = keyOf(idx);
     rec = await startRun(idx, true).promise;
     if (token !== cycleToken || !rec) return;
+    cache.set(k, rec);
+  } else {
+    setStageSize(rec);
+    updateStats(rec.lastStats, rec, true);
   }
 
   state.cur = rec;
   stopQuips();
   setQuip(DONE_QUIPS[(Math.random() * DONE_QUIPS.length) | 0]);
-  ui.replay.disabled = false;
+  ui.play.disabled = false;
   ui.png.disabled = false;
   ui.vid.disabled = !VID_MIME;
-  buildAnim(rec);
-  animateAndAdvance(rec, token);
+
+  if (opts.play || ui.auto.checked) {
+    buildAnim(rec, false);
+    playAnim(() => afterPlay(rec, token, false));
+  } else {
+    paintMosaic(rec); // show the finished result, morph plays on demand
+  }
 }
 
-async function animateAndAdvance(rec, token) {
-  idle = false;
-  const nextIdx = (rec.idx + 1) % SAMPLES.length;
-  let nextP = null;
-  if (ui.auto.checked && !state.recording) nextP = startRun(nextIdx, false).promise;
-
-  await playAnimP();
+async function afterPlay(rec, token, wasReverse) {
   if (token !== cycleToken) return;
+  if (!ui.auto.checked || wasReverse) { idle = true; return; }
   await sleep(HOLD_MS);
   if (token !== cycleToken) return;
   while (state.recording) { await sleep(400); if (token !== cycleToken) return; }
   if (!ui.auto.checked) { idle = true; return; }
-
-  const nr = nextP ? await nextP : null;
-  if (token !== cycleToken) return;
-  runCycle(nextIdx, nr || undefined);
+  runCycle((rec.idx + 1) % SAMPLES.length);
 }
 
 // ---------------------------------------------------------------- controls
 let knobTimer = 0;
 function reRun() {
   clearTimeout(knobTimer);
-  knobTimer = setTimeout(() => runCycle(curIdx), 300);
+  knobTimer = setTimeout(() => {
+    queue = [...SAMPLES.keys()];
+    runCycle(curIdx);
+    pump();
+  }, 300);
 }
 ui.res.addEventListener('change', reRun);
 ui.effort.addEventListener('change', reRun);
 ui.prox.addEventListener('input', () => { ui.proxOut.textContent = ui.prox.value; reRun(); });
 ui.auto.addEventListener('change', () => {
-  if (ui.auto.checked && idle) runCycle((curIdx + 1) % SAMPLES.length);
+  if (ui.auto.checked && idle) runCycle(curIdx, { play: true });
 });
-ui.replay.addEventListener('click', () => {
-  if (!state.anim || state.recording) return;
-  animateAndAdvance(state.cur, ++cycleToken);
+ui.play.addEventListener('click', () => {
+  if (!state.cur || state.recording) return;
+  const token = ++cycleToken;
+  const rev = ui.reverse.checked;
+  buildAnim(state.cur, rev);
+  playAnim(() => afterPlay(state.cur, token, rev));
 });
 
 // ---------------------------------------------------------------- exports
@@ -547,10 +577,11 @@ const VID_MIME = (() => {
 if (!VID_MIME) ui.vid.title = 'Video recording is not supported in this browser';
 
 ui.vid.addEventListener('click', () => {
-  if (!state.anim || !VID_MIME || state.recording) return;
+  if (!state.cur || !VID_MIME || state.recording) return;
   state.recording = true;
   cycleToken++; // cancel any pending auto-advance while recording
-  for (const b of [ui.replay, ui.png, ui.vid]) b.disabled = true;
+  const wasReverse = ui.reverse.checked;
+  for (const b of [ui.play, ui.png, ui.vid]) b.disabled = true;
   setQuip('Recording. Act natural.');
   const stream = ui.stage.captureStream(60);
   const rec = new MediaRecorder(stream, { mimeType: VID_MIME, videoBitsPerSecond: 8e6 });
@@ -564,17 +595,18 @@ ui.vid.addEventListener('click', () => {
     aEl.click();
     setTimeout(() => URL.revokeObjectURL(aEl.href), 5000);
     state.recording = false;
-    ui.replay.disabled = false;
+    ui.play.disabled = false;
     ui.png.disabled = false;
     ui.vid.disabled = false;
     setQuip('Video saved. Post responsibly.');
-    if (ui.auto.checked) {
+    if (ui.auto.checked && !wasReverse) {
       setTimeout(() => { if (!state.recording) runCycle((curIdx + 1) % SAMPLES.length); }, 1200);
     } else {
       idle = true;
     }
   };
   rec.start();
+  buildAnim(state.cur, wasReverse);
   playAnim(() => setTimeout(() => rec.stop(), 400));
 });
 
@@ -591,6 +623,11 @@ function buildStrip() {
 }
 
 const gaben = new Image();
-gaben.onload = () => { buildStrip(); runCycle(0); };
+gaben.onload = () => {
+  buildStrip();
+  queue = [...SAMPLES.keys()];
+  runCycle(0, { play: true }); // first reveal plays once, then it is play on demand
+  pump();
+};
 gaben.src = window.GABEN_DATA_URI;
 })();

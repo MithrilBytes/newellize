@@ -33,10 +33,13 @@
         <option value="8000" selected>standard</option>
         <option value="20000">max</option>
       </select>
-      <label class="chk" title="Advance to the next sample automatically">
-        <input type="checkbox" id="autoChk" checked> auto
+      <button id="playBtn" disabled>play</button>
+      <label class="chk" title="Play the morph backward">
+        <input type="checkbox" id="reverseChk"> reverse
       </label>
-      <button id="replayBtn" disabled>replay</button>
+      <label class="chk" title="Play every sample in a loop">
+        <input type="checkbox" id="autoChk"> auto
+      </label>
       <button id="pngBtn" disabled>png</button>
       <button id="vidBtn" disabled>video</button>
     </div>
