@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>Newellize</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="assets/gaben.jpg">
+</head>
+<body>
+  <header>
+    <h1>NEWELL<span class="accent">IZE</span></h1>
+    <p class="tagline">Turn anything into the President of Valve.</p>
+  </header>
+
+  <main>
+    <canvas id="stage" width="512" height="512"></canvas>
+    <div id="strip" aria-label="samples"></div>
+    <div id="toolbar">
+      <select id="resSel" title="Grid resolution">
+        <option value="64">64</option>
+        <option value="96">96</option>
+        <option value="128" selected>128</option>
+        <option value="160">160</option>
+      </select>
+      <label id="proxWrap" title="0 = maximum Gabe, 100 = pixels barely leave home">
+        proximity <input type="range" id="proxSlider" min="0" max="100" value="15">
+        <output id="proxOut">15</output>
+      </label>
+      <select id="effortSel" title="Optimizer budget">
+        <option value="3000">quick</option>
+        <option value="8000" selected>standard</option>
+        <option value="20000">max</option>
+      </select>
+      <label class="chk" title="Advance to the next sample automatically">
+        <input type="checkbox" id="autoChk" checked> auto
+      </label>
+      <button id="replayBtn" disabled>replay</button>
+      <button id="pngBtn" disabled>png</button>
+      <button id="vidBtn" disabled>video</button>
+    </div>
+    <div id="status"><span id="quip">Warming up.</span> <span id="stats"></span></div>
+  </main>
+
+  <footer>
+    <p>A fan parody. Not affiliated with Valve Corporation or Gabe Newell.
+      Every pixel of each result is a pixel of the source image, used exactly once.</p>
+    <p>Inspired by <a href="https://github.com/Spu7Nix/obamify" target="_blank" rel="noopener">obamify</a>
+      by Spu7Nix · Portrait: the widely circulated Valve press photo (© Valve), used in parody</p>
+  </footer>
+
+  <script src="assets/gaben.js"></script>
+  <script src="worker.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
