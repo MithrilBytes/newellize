@@ -22,10 +22,8 @@ body {
   padding: 22px 14px 36px;
 }
 
-header { text-align: center; margin-bottom: 18px; }
-h1 { margin: 0; font-size: 40px; letter-spacing: 9px; font-weight: 800; }
-h1 .accent { color: var(--accent); }
-.tagline { margin: 4px 0 0; color: var(--muted); letter-spacing: 1px; }
+header { text-align: center; margin-bottom: 14px; }
+h1 { margin: 0; font-size: 22px; font-weight: 600; }
 
 main {
   width: 100%;
@@ -35,6 +33,7 @@ main {
   gap: 12px;
 }
 
+#stageWrap { position: relative; }
 #stage {
   width: 100%;
   display: block;
@@ -43,6 +42,18 @@ main {
   background: var(--panel-2);
   image-rendering: pixelated;
 }
+#spin {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 44px;
+  height: 44px;
+  border: 3px solid rgba(102, 192, 244, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 #strip { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 #strip canvas {
@@ -81,14 +92,13 @@ main {
 #proxWrap output { color: var(--accent); min-width: 20px; }
 .chk input { accent-color: var(--accent); }
 
-#status {
+#stats {
   text-align: center;
   font-size: 12.5px;
   color: var(--muted);
   min-height: 18px;
   font-variant-numeric: tabular-nums;
 }
-#quip { color: var(--text); }
 
 footer {
   margin-top: 26px;

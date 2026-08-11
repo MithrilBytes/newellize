@@ -3,10 +3,10 @@
 Turn anything into the President of Valve.
 
 A parody of [obamify](https://github.com/Spu7Nix/obamify) by Spu7Nix. The app
-rearranges the pixels of sample images into Gabe Newell. Pick a sample, press play,
-check reverse to run the morph backward, or set auto to loop the whole set like a gif
-that plays itself. Every pixel of a result is a pixel of the source image, used
-exactly once. Nothing added, nothing lost, only rearranged.
+rearranges the pixels of sample images into Gabe Newell and loops the whole set on
+its own. Pick a sample to jump, press play to rewatch, check reverse to run the
+morph backward. Every pixel of a result is a pixel of the source image, used exactly
+once. Nothing added, nothing lost, only rearranged.
 
 ## Run
 
@@ -22,8 +22,8 @@ python3 -m http.server 4173
 2. Initial assignment: the k-th brightest source pixel goes to the k-th brightest cell.
 3. A Web Worker refines it with millions of pair swaps and 3-cycle rotations under
    threshold accepting. A move survives if it lowers weighted RGB error plus
-   proximity importance times distance squared. The solver never draws to the stage,
-   you only see a progress figure while the raw frame holds.
+   proximity importance times distance squared. The solver never draws to the stage.
+   While it runs you get a loading circle.
 4. The permutation plays as a physics morph, modeled on obamify's morph_sim: every
    pixel starts at once, pulled toward its cell by a force that ramps cubically with
    time (per pixel ramp rate, so arrivals stagger naturally), with damping and a

@@ -3,30 +3,17 @@
 
 const $ = (id) => document.getElementById(id);
 const ui = {
-  stage: $('stage'), strip: $('strip'),
-  res: $('resSel'), prox: $('proxSlider'), proxOut: $('proxOut'), effort: $('effortSel'),
+  stage: $('stage'), strip: $('strip'), spin: $('spin'),
+  res: $('resSel'), prox: $('proxSlider'), proxOut: $('proxOut'),
   auto: $('autoChk'), play: $('playBtn'), reverse: $('reverseChk'), png: $('pngBtn'), vid: $('vidBtn'),
-  quip: $('quip'), stats: $('stats'),
+  stats: $('stats'),
 };
 const stageCtx = ui.stage.getContext('2d');
 const MAX_COLOR_ERR = 9 * 65025; // weights 2+4+3 at delta 255
 const HOLD_MS = 3200;
+const BUDGET_MS = 8000;
 
-const RUN_QUIPS = [
-  'Rearranging pixels. They said it could not be done.',
-  'Negotiating with each pixel individually.',
-  'Counting to three. Stuck at two again.',
-  'Applying Valve Time to the ETA.',
-  'Consulting the hat economy.',
-  'Your pixels will ship when they are ready.',
-  'Running it through the summer sale algorithm.',
-];
-const DONE_QUIPS = [
-  'Newellization complete. He is inevitable.',
-  'Done. Every pixel found its purpose.',
-  'The President of Valve, assembled from the source.',
-  'Shipped. On the first try, too.',
-];
+const setSpin = (on) => { ui.spin.hidden = !on; };
 
 // ---------------------------------------------------------------- samples
 function seededRnd(seed) {
@@ -223,7 +210,7 @@ function tgtSmall(N) {
 }
 
 // ---------------------------------------------------------------- worker runs
-let worker = null, workerURL = null, runSeq = 0, visibleRunId = 0;
+let worker = null, workerURL = null, runSeq = 0;
 const runs = new Map();
 
 function ensureWorker() {
@@ -233,7 +220,10 @@ function ensureWorker() {
   );
   worker = new Worker(workerURL);
   worker.onmessage = onWorkerMsg;
-  worker.onerror = (e) => setQuip(`Optimizer crashed: ${e.message || 'unknown error'}`);
+  worker.onerror = (e) => {
+    setSpin(false);
+    ui.stats.textContent = `optimizer crashed: ${e.message || 'unknown error'}`;
+  };
 }
 
 function startRun(idx, live) {
@@ -247,14 +237,14 @@ function startRun(idx, live) {
   rec.promise = new Promise((res) => { rec.resolve = res; });
   runs.set(runId, rec);
   if (live) {
-    visibleRunId = runId;
     setStageSize(rec);
-    showRaw(rec);
-    startQuips();
+    stageCtx.fillStyle = '#16202d';
+    stageCtx.fillRect(0, 0, rec.S, rec.S);
+    setSpin(true);
   }
   worker.postMessage({
     cmd: 'start', runId, N, src, tgt: tgtSmall(N),
-    lambda01: +ui.prox.value / 100, budgetMs: +ui.effort.value,
+    lambda01: +ui.prox.value / 100, budgetMs: BUDGET_MS,
   });
   return rec;
 }
@@ -265,8 +255,6 @@ function onWorkerMsg(e) {
   if (!rec) return; // stale
   rec.perm = m.perm;
   rec.lastStats = m;
-  // solver progress is numbers only; the stage keeps showing the raw sample
-  if (m.runId === visibleRunId) updateStats(m, rec, m.type === 'done');
   if (m.type === 'done') { runs.delete(m.runId); rec.resolve(rec); }
 }
 
@@ -300,29 +288,14 @@ function paintMosaic(rec) {
   stageCtx.drawImage(mosaic.canvas, 0, 0, rec.S, rec.S);
 }
 
-// ---------------------------------------------------------------- quips, stats
-const state = { cur: null, anim: null, animRAF: 0, animating: false, recording: false, quipTimer: 0 };
+// ---------------------------------------------------------------- stats
+const state = { cur: null, anim: null, animRAF: 0, animating: false, recording: false };
 
-function setQuip(t) { ui.quip.textContent = t; }
-function startQuips() {
-  stopQuips();
-  let i = (Math.random() * RUN_QUIPS.length) | 0;
-  setQuip(RUN_QUIPS[i]);
-  state.quipTimer = setInterval(() => { i = (i + 1) % RUN_QUIPS.length; setQuip(RUN_QUIPS[i]); }, 2600);
-}
-function stopQuips() { clearInterval(state.quipTimer); state.quipTimer = 0; }
-
-function updateStats(m, rec, done) {
+function updateStats(m) {
   if (!m) { ui.stats.textContent = ''; return; }
-  const name = SAMPLES[rec.idx].name;
-  if (!done) {
-    ui.stats.textContent =
-      `${name} · assigning pixels ${Math.round((m.progress || 0) * 100)}% · ${(m.iter / 1e6).toFixed(1)}M swaps`;
-  } else {
-    const r = Math.max(0, 100 * (1 - Math.sqrt(m.colorErr / MAX_COLOR_ERR)));
-    ui.stats.textContent =
-      `${name} · ${(m.iter / 1e6).toFixed(1)}M swaps · resemblance ${r.toFixed(1)}%`;
-  }
+  const r = Math.max(0, 100 * (1 - Math.sqrt(m.colorErr / MAX_COLOR_ERR)));
+  ui.stats.textContent =
+    `${(m.iter / 1e6).toFixed(1)}M swaps · resemblance ${r.toFixed(1)}%`;
 }
 
 // ---------------------------------------------------------------- animation
@@ -454,7 +427,7 @@ function playAnim(onEnd) {
  */
 let cycleToken = 0, curIdx = 0, idle = false;
 const cache = new Map();
-const keyOf = (idx) => `${idx}|${ui.res.value}|${ui.prox.value}|${ui.effort.value}`;
+const keyOf = (idx) => `${idx}|${ui.res.value}|${ui.prox.value}`;
 let queue = [];
 let bgBusy = false;
 
@@ -495,12 +468,11 @@ async function runCycle(idx, opts = {}) {
     cache.set(k, rec);
   } else {
     setStageSize(rec);
-    updateStats(rec.lastStats, rec, true);
   }
+  setSpin(false);
 
   state.cur = rec;
-  stopQuips();
-  setQuip(DONE_QUIPS[(Math.random() * DONE_QUIPS.length) | 0]);
+  updateStats(rec.lastStats);
   ui.play.disabled = false;
   ui.png.disabled = false;
   ui.vid.disabled = !VID_MIME;
@@ -534,7 +506,6 @@ function reRun() {
   }, 300);
 }
 ui.res.addEventListener('change', reRun);
-ui.effort.addEventListener('change', reRun);
 ui.prox.addEventListener('input', () => { ui.proxOut.textContent = ui.prox.value; reRun(); });
 ui.auto.addEventListener('change', () => {
   if (ui.auto.checked && idle) runCycle(curIdx, { play: true });
@@ -582,7 +553,6 @@ ui.vid.addEventListener('click', () => {
   cycleToken++; // cancel any pending auto-advance while recording
   const wasReverse = ui.reverse.checked;
   for (const b of [ui.play, ui.png, ui.vid]) b.disabled = true;
-  setQuip('Recording. Act natural.');
   const stream = ui.stage.captureStream(60);
   const rec = new MediaRecorder(stream, { mimeType: VID_MIME, videoBitsPerSecond: 8e6 });
   const chunks = [];
@@ -598,7 +568,6 @@ ui.vid.addEventListener('click', () => {
     ui.play.disabled = false;
     ui.png.disabled = false;
     ui.vid.disabled = false;
-    setQuip('Video saved. Post responsibly.');
     if (ui.auto.checked && !wasReverse) {
       setTimeout(() => { if (!state.recording) runCycle((curIdx + 1) % SAMPLES.length); }, 1200);
     } else {

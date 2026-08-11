@@ -4,18 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
-  <title>Newellize</title>
+  <title>Gabe</title>
   <link rel="stylesheet" href="style.css">
   <link rel="icon" href="assets/gaben.jpg">
 </head>
 <body>
-  <header>
-    <h1>NEWELL<span class="accent">IZE</span></h1>
-    <p class="tagline">Turn anything into the President of Valve.</p>
-  </header>
+  <header><h1>Gabe</h1></header>
 
   <main>
-    <canvas id="stage" width="512" height="512"></canvas>
+    <div id="stageWrap">
+      <canvas id="stage" width="512" height="512"></canvas>
+      <div id="spin" hidden></div>
+    </div>
     <div id="strip" aria-label="samples"></div>
     <div id="toolbar">
       <select id="resSel" title="Grid resolution">
@@ -28,29 +28,22 @@
         proximity <input type="range" id="proxSlider" min="0" max="100" value="15">
         <output id="proxOut">15</output>
       </label>
-      <select id="effortSel" title="Optimizer budget">
-        <option value="3000">quick</option>
-        <option value="8000" selected>standard</option>
-        <option value="20000">max</option>
-      </select>
       <button id="playBtn" disabled>play</button>
       <label class="chk" title="Play the morph backward">
         <input type="checkbox" id="reverseChk"> reverse
       </label>
       <label class="chk" title="Play every sample in a loop">
-        <input type="checkbox" id="autoChk"> auto
+        <input type="checkbox" id="autoChk" checked> auto
       </label>
       <button id="pngBtn" disabled>png</button>
       <button id="vidBtn" disabled>video</button>
     </div>
-    <div id="status"><span id="quip">Warming up.</span> <span id="stats"></span></div>
+    <div id="stats"></div>
   </main>
 
   <footer>
-    <p>A fan parody. Not affiliated with Valve Corporation or Gabe Newell.
-      Every pixel of each result is a pixel of the source image, used exactly once.</p>
-    <p>Inspired by <a href="https://github.com/Spu7Nix/obamify" target="_blank" rel="noopener">obamify</a>
-      by Spu7Nix · Portrait: the widely circulated Valve press photo (© Valve), used in parody</p>
+    <p>Fan parody, not affiliated with Valve · after
+      <a href="https://github.com/Spu7Nix/obamify" target="_blank" rel="noopener">obamify</a> by Spu7Nix</p>
   </footer>
 
   <script src="assets/gaben.js"></script>
