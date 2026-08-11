@@ -1,60 +1,62 @@
 # newellize
 
-Turn anything into the President of Valve.
+It turns images into Gabe Newell. That is the whole thing.
 
 Live: <https://mithrilbytes.github.io/newellize/>
 
-A parody of [obamify](https://github.com/Spu7Nix/obamify) by Spu7Nix. The app
-rearranges the pixels of sample images into Gabe Newell and loops the whole set on
-its own. Pick a sample to jump, press play to rewatch, check reverse to run the
-morph backward. Every pixel of a result is a pixel of the source image, used exactly
-once. Nothing added, nothing lost, only rearranged.
+A parody of [obamify](https://github.com/Spu7Nix/obamify) by Spu7Nix, which did
+this to Obama first and called the mechanism "magic". We have lawyers now, so we
+have to be more specific.
 
-## Run
+## What it does
 
-No build, no dependencies. Double-click `index.html`, or:
+There are seven sample images. Each one is taken apart and reassembled into Gabe.
+No pixels are added. No pixels are removed. Every pixel of the result came from
+the source image and was asked, politely, to stand somewhere else. This is legal.
 
-```bash
-python3 -m http.server 4173
-```
+## How it does it
 
-## How it works
+1. The image and the portrait get chopped into a grid.
+2. The brightest pixel is sent where the brightest pixel is needed. Repeat 16,384 times.
+3. A Web Worker then tries about fifty million swaps, keeping each one only if it
+   makes the image more Gabe. This is called an algorithm.
+4. The pixels fly to their new homes. Slowly. It is important that it is slow.
 
-1. The source and the portrait are downscaled to an N by N grid (64 to 160).
-2. Initial assignment: the k-th brightest source pixel goes to the k-th brightest cell.
-3. A Web Worker refines it with millions of pair swaps and 3-cycle rotations under
-   threshold accepting. A move survives if it lowers weighted RGB error plus
-   proximity importance times distance squared. The solver never draws to the stage.
-   While it runs you get a loading circle.
-4. The permutation plays as a physics morph, modeled on obamify's morph_sim: every
-   pixel starts at once, pulled toward its cell by a force that ramps cubically with
-   time (per pixel ramp rate, so arrivals stagger naturally), with damping and a
-   speed cap. The raw sample stays underneath as a ghost so the frame keeps full
-   coverage while pixels flow. obamify does that part with a GPU Voronoi jump flood.
-   Every sample precomputes in the background, so switching presets is instant.
+While the math happens you get a loading circle, because watching an optimizer
+work is like watching soup boil.
 
-The proximity slider is straight from obamify. At 0 you get maximum Gabe. At 100 the
-pixels barely leave home and only a faint Gabe haunts the image.
+The proximity slider decides how attached your pixels are to home. At 0 they
+abandon everything for him. At 100 they mostly stay put and Gabe merely haunts
+the image.
+
+## Controls
+
+play plays it. reverse unplays it. auto plays all seven forever, which is the
+recommended way to live.
 
 ## Why no uploads
 
-Inputs are curated samples only, generated in code and chosen to cover the palette and
-value range the portrait needs. People on the internet are bad people.
+People on the internet are bad people.
 
-## Swap the target
+## Running it locally
 
-```bash
-./tools/embed.sh path/to/portrait.jpg
-```
+It is a folder of files. Double-click index.html, or:
 
-Regenerates `assets/gaben.js`, the embedded base64 target. The embed is also what lets
-the app run from file:// without canvas tainting.
+    python3 -m http.server 4173
+
+No build. No dependencies. No node_modules with nine thousand items in it.
+
+## Swapping the target
+
+    ./tools/embed.sh someone_else.jpg
+
+This re-embeds the portrait as base64, which is also the trick that lets the
+whole thing run from file:// without the canvas throwing a tantrum.
 
 ## Credits
 
-- Concept: [obamify](https://github.com/Spu7Nix/obamify) by [Spu7Nix](https://github.com/Spu7Nix).
-- Portrait: the widely circulated Valve press photo of Gabe Newell, © Valve, used as
-  non-commercial fan parody. A fully free alternative is the
-  [CC BY 2.0 GDC 2010 photo](https://commons.wikimedia.org/wiki/File:Gabe_Newell_GDC_2010_(cropped_2).jpg).
-- Not affiliated with Valve Corporation.
-- Code: MIT, see [LICENSE](LICENSE).
+- [obamify](https://github.com/Spu7Nix/obamify) by Spu7Nix. The original science.
+- The portrait is the Valve press photo everyone has seen, used as fan parody.
+  Valve, if you are reading this, we accept exposure in Half-Life 3 as payment.
+- Not affiliated with Valve or Gabe Newell.
+- Code is MIT, see [LICENSE](LICENSE).
