@@ -4,59 +4,45 @@ It turns images into Gabe Newell. That is the whole thing.
 
 Live: <https://mithrilbytes.github.io/newellize/>
 
-A parody of [obamify](https://github.com/Spu7Nix/obamify) by Spu7Nix, which did
-this to Obama first and called the mechanism "magic". We have lawyers now, so we
-have to be more specific.
+A parody of [obamify](https://github.com/Spu7Nix/obamify) by Spu7Nix, which
+calls its mechanism "magic". Ours is also magic, but with more steps.
 
-## What it does
+## The technology
 
-There are seven sample images. Each one is taken apart and reassembled into Gabe.
-No pixels are added. No pixels are removed. Every pixel of the result came from
-the source image and was asked, politely, to stand somewhere else. This is legal.
+Seven images. Each one gets taken apart and rebuilt into Gabe. No pixels added,
+none removed. Every pixel is just asked to stand somewhere else. This is legal.
 
-## How it does it
+1. Chop everything into a grid.
+2. Send bright pixels where bright pixels are needed.
+3. Try fifty million swaps. Keep the ones that make it more Gabe.
+4. Let the pixels fly home. Slowly. The slowness is the product.
 
-1. The image and the portrait get chopped into a grid.
-2. The brightest pixel is sent where the brightest pixel is needed. Repeat 16,384 times.
-3. A Web Worker then tries about fifty million swaps, keeping each one only if it
-   makes the image more Gabe. This is called an algorithm.
-4. The pixels fly to their new homes. Slowly. It is important that it is slow.
+The solver hides behind a loading circle because watching an optimizer work is
+like watching soup boil.
 
-While the math happens you get a loading circle, because watching an optimizer
-work is like watching soup boil.
-
-The proximity slider decides how attached your pixels are to home. At 0 they
-abandon everything for him. At 100 they mostly stay put and Gabe merely haunts
-the image.
+The proximity slider sets how attached pixels are to home. At 0 they leave
+everything for him. At 100 Gabe merely haunts the image.
 
 ## Controls
 
 play plays it. reverse unplays it. auto plays all seven forever, which is the
 recommended way to live.
 
-## Why no uploads
+## Run it locally
 
-People on the internet are bad people.
+Double-click index.html. That is it. No build, no dependencies, no node_modules
+the size of a moon.
 
-## Running it locally
-
-It is a folder of files. Double-click index.html, or:
-
-    python3 -m http.server 4173
-
-No build. No dependencies. No node_modules with nine thousand items in it.
-
-## Swapping the target
+## Change the target
 
     ./tools/embed.sh someone_else.jpg
 
-This re-embeds the portrait as base64, which is also the trick that lets the
-whole thing run from file:// without the canvas throwing a tantrum.
+Embeds any portrait as base64. The math does not care who it builds.
 
 ## Credits
 
 - [obamify](https://github.com/Spu7Nix/obamify) by Spu7Nix. The original science.
-- The portrait is the Valve press photo everyone has seen, used as fan parody.
-  Valve, if you are reading this, we accept exposure in Half-Life 3 as payment.
+- Portrait: the Valve press photo everyone has seen. Fan parody. Valve, we
+  accept exposure in Half-Life 3 as payment.
 - Not affiliated with Valve or Gabe Newell.
-- Code is MIT, see [LICENSE](LICENSE).
+- MIT, see [LICENSE](LICENSE).
