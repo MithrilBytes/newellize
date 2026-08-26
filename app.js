@@ -273,11 +273,6 @@ function setStageSize(rec) {
   if (ui.stage.width !== rec.S) { ui.stage.width = rec.S; ui.stage.height = rec.S; }
 }
 
-function showRaw(rec) {
-  stageCtx.imageSmoothingEnabled = true;
-  stageCtx.drawImage(sampleCanvas(rec.idx), 0, 0, rec.S, rec.S);
-}
-
 function paintMosaic(rec) {
   if (!rec.perm) return;
   ensureMosaic(rec.N);
@@ -307,7 +302,18 @@ function updateStats(m) {
  * stays underneath as a ghost so the frame keeps full coverage while pixels
  * flow (obamify gets this from a Voronoi jump flood on the GPU).
  */
-function buildAnim(rec, reverse) {
+function splatBase(buf, xs, ys, col, n, cell, S) {
+  for (let c = 0; c < n; c++) {
+    const v = col[c];
+    let off = (ys[c] * S + xs[c]) | 0;
+    for (let yy = 0; yy < cell; yy++) {
+      for (let xx = 0; xx < cell; xx++) buf[off + xx] = v;
+      off += S;
+    }
+  }
+}
+
+function buildAnim(rec, reverse, arrived) {
   const { N, cell, S, perm, colors32 } = rec;
   const n = N * N;
   const a = {
@@ -316,10 +322,9 @@ function buildAnim(rec, reverse) {
     px: new Float32Array(n), py: new Float32Array(n),
     vx: new Float32Array(n), vy: new Float32Array(n),
     force: new Float32Array(n),
-    settled: new Uint8Array(n),
     col: new Uint32Array(n),
-    base: new Uint32Array(S * S),
-    reverse: !!reverse, S, cell, n,
+    baseStart: new Uint32Array(S * S), baseEnd: new Uint32Array(S * S),
+    reverse: !!reverse, done: false, elapsed: 0, S, cell, n,
   };
   for (let c = 0; c < n; c++) {
     const p = perm[c];
@@ -330,18 +335,48 @@ function buildAnim(rec, reverse) {
     a.force[c] = 0.18 + Math.random() * 0.4; // wide ramp spread, the change stays slow
     a.col[c] = colors32[p];
   }
-  // ghost underlay = the start state, so the frame keeps full coverage
-  for (let c = 0; c < n; c++) {
-    const col = a.col[c];
-    let off = (a.sy[c] * S + a.sx[c]) | 0;
-    for (let yy = 0; yy < cell; yy++) {
-      for (let xx = 0; xx < cell; xx++) a.base[off + xx] = col;
-      off += S;
-    }
+  // ghost underlays for both ends, so gaps between drifting squares stay in palette
+  splatBase(a.baseStart, a.sx, a.sy, a.col, n, cell, S);
+  splatBase(a.baseEnd, a.dx, a.dy, a.col, n, cell, S);
+  if (arrived) {
+    a.px.set(a.dx); a.py.set(a.dy);
+    a.done = true; a.elapsed = 8;
+  } else {
+    a.px.set(a.sx); a.py.set(a.sy);
   }
+  a.endFired = a.done;
   a.image = stageCtx.createImageData(S, S);
   a.u32 = new Uint32Array(a.image.data.buffer);
+  // spatial hash scratch for neighbor repulsion
+  a.bs = cell * 1.35;
+  a.bw = Math.ceil(S / a.bs) + 1;
+  a.bcount = new Int32Array(a.bw * a.bw);
+  a.bstart = new Int32Array(a.bw * a.bw + 1);
+  a.bentry = new Int32Array(n);
+  a.bidx = new Int32Array(n);
   state.anim = a;
+}
+
+function buildBuckets(a) {
+  const { bs, bw, bcount, bstart, bentry, bidx, px, py, n } = a;
+  const bmax = bw - 1;
+  bcount.fill(0);
+  for (let i = 0; i < n; i++) {
+    let bx = (px[i] / bs) | 0, by = (py[i] / bs) | 0;
+    if (bx < 0) bx = 0; else if (bx > bmax) bx = bmax;
+    if (by < 0) by = 0; else if (by > bmax) by = bmax;
+    const b = by * bw + bx;
+    bidx[i] = b;
+    bcount[b]++;
+  }
+  let s = 0;
+  for (let b = 0; b < bw * bw; b++) { bstart[b] = s; s += bcount[b]; }
+  bstart[bw * bw] = s;
+  bcount.fill(0);
+  for (let i = 0; i < n; i++) {
+    const b = bidx[i];
+    bentry[bstart[b] + bcount[b]++] = i;
+  }
 }
 
 function stopAnim() {
@@ -349,21 +384,102 @@ function stopAnim() {
   state.animating = false;
 }
 
+// one 60Hz physics step: spring toward home, neighbor repulsion, damping
+function simStep(a) {
+  const { S, cell, n } = a;
+  const MAX_V = cell * 1.15;
+  const DAMP = 0.965;
+  const R = cell * 1.35, R2 = R * R;
+  const REP = a.done ? 0.03 : 0.06; // the crowd calms down once arrived
+  const DONE_FAC = 60;              // arrived spring: firm hold, subtle jostle
+  const NEAR = cell * 2.5;
+  a.elapsed += 1 / 60;
+  buildBuckets(a);
+  let far = 0;
+  for (let c = 0; c < n; c++) {
+    const ddx = a.dx[c] - a.px[c], ddy = a.dy[c] - a.py[c];
+    const dist = Math.sqrt(ddx * ddx + ddy * ddy);
+    if (dist > NEAR) far++;
+    const t = a.elapsed * a.force[c];
+    let fac = Math.min(t * t * t, 1000);
+    if (a.done && dist < NEAR) fac = Math.min(fac, DONE_FAC);
+    const g = fac / (S * 60);
+    let vX = a.vx[c] + ddx * dist * g;
+    let vY = a.vy[c] + ddy * dist * g;
+    if (a.done) { // perpetual murmur so the settled image never goes still
+      vX += (Math.random() - 0.5) * 0.03;
+      vY += (Math.random() - 0.5) * 0.03;
+    }
+    // neighbor repulsion via the bucket grid
+    const bx = (a.px[c] / a.bs) | 0, by = (a.py[c] / a.bs) | 0;
+    for (let oy = -1; oy <= 1; oy++) {
+      const yb = by + oy;
+      if (yb < 0 || yb >= a.bw) continue;
+      for (let ox = -1; ox <= 1; ox++) {
+        const xb = bx + ox;
+        if (xb < 0 || xb >= a.bw) continue;
+        const b = yb * a.bw + xb;
+        const end = a.bstart[b] + a.bcount[b];
+        for (let k = a.bstart[b]; k < end; k++) {
+          const j = a.bentry[k];
+          if (j === c) continue;
+          const rx = a.px[c] - a.px[j], ry = a.py[c] - a.py[j];
+          const d2 = rx * rx + ry * ry;
+          if (d2 >= R2) continue;
+          if (d2 < 0.01) {
+            vX += (Math.random() - 0.5) * 0.3;
+            vY += (Math.random() - 0.5) * 0.3;
+          } else {
+            const d = Math.sqrt(d2);
+            const kf = REP * (R - d) / d;
+            vX += rx * kf;
+            vY += ry * kf;
+          }
+        }
+      }
+    }
+    vX *= DAMP; vY *= DAMP;
+    const sp = Math.sqrt(vX * vX + vY * vY);
+    if (sp > MAX_V) { const k = MAX_V / sp; vX *= k; vY *= k; }
+    let nx = a.px[c] + vX, ny = a.py[c] + vY;
+    if (nx < 0) { nx = 0; if (vX < 0) vX = 0; }
+    else if (nx > S - cell) { nx = S - cell; if (vX > 0) vX = 0; }
+    if (ny < 0) { ny = 0; if (vY < 0) vY = 0; }
+    else if (ny > S - cell) { ny = S - cell; if (vY > 0) vY = 0; }
+    a.vx[c] = vX; a.vy[c] = vY;
+    a.px[c] = nx; a.py[c] = ny;
+  }
+  if (!a.done && (far <= n * 0.01 || a.elapsed > 15)) a.done = true;
+}
+
+function renderAnim(a) {
+  const { S, cell, n } = a;
+  a.u32.set(a.done ? a.baseEnd : a.baseStart);
+  for (let c = 0; c < n; c++) {
+    let ix = Math.round(a.px[c]), iy = Math.round(a.py[c]);
+    if (ix < 0) ix = 0; else if (ix > S - cell) ix = S - cell;
+    if (iy < 0) iy = 0; else if (iy > S - cell) iy = S - cell;
+    const col = a.col[c];
+    let off = iy * S + ix;
+    for (let yy = 0; yy < cell; yy++) {
+      for (let xx = 0; xx < cell; xx++) a.u32[off + xx] = col;
+      off += S;
+    }
+  }
+  stageCtx.putImageData(a.image, 0, 0);
+}
+
+/*
+ * The sim never terminates. Particles are pulled by a spring that fades near
+ * home and are constantly jostled by neighbor repulsion, so the settled image
+ * keeps breathing, like obamify. stopAnim (next sample, replay, solve) is the
+ * only way the loop ends. onEnd fires once, at arrival, for the auto cycle.
+ */
 function playAnim(onEnd) {
   const a = state.anim;
   if (!a) { if (onEnd) onEnd(); return; }
   stopAnim();
   state.animating = true;
-  const { S, cell, n } = a;
-  a.px.set(a.sx); a.py.set(a.sy);
-  a.vx.fill(0); a.vy.fill(0);
-  a.settled.fill(0);
-  const MAX_V = cell * 1.15; // slow glide, the whole change reads gradually
-  const DAMP = 0.965;
-  const SNAP = cell * 0.45;
-  const SNAP_SPEED2 = MAX_V * MAX_V * 0.2;
-  let elapsed = 0;
-  let settledCount = 0;
   let acc = 0;
   let last = performance.now();
 
@@ -372,50 +488,11 @@ function playAnim(onEnd) {
     last = now;
     while (acc >= 16.667) { // fixed 60Hz steps, display rate independent
       acc -= 16.667;
-      elapsed += 1 / 60;
-      for (let c = 0; c < n; c++) {
-        if (a.settled[c]) continue;
-        const ddx = a.dx[c] - a.px[c], ddy = a.dy[c] - a.py[c];
-        const dist = Math.sqrt(ddx * ddx + ddy * ddy);
-        let vX = a.vx[c], vY = a.vy[c];
-        if (dist < SNAP && vX * vX + vY * vY < SNAP_SPEED2) {
-          a.px[c] = a.dx[c]; a.py[c] = a.dy[c];
-          a.settled[c] = 1; settledCount++;
-          continue;
-        }
-        const t = elapsed * a.force[c];
-        const fac = Math.min(t * t * t, 1000);
-        const g = fac / (S * 60);
-        vX = (vX + ddx * dist * g) * DAMP;
-        vY = (vY + ddy * dist * g) * DAMP;
-        const sp = Math.sqrt(vX * vX + vY * vY);
-        if (sp > MAX_V) { const k = MAX_V / sp; vX *= k; vY *= k; }
-        a.vx[c] = vX; a.vy[c] = vY;
-        a.px[c] += vX; a.py[c] += vY;
-      }
+      simStep(a);
     }
-    a.u32.set(a.base);
-    for (let c = 0; c < n; c++) {
-      let ix = Math.round(a.px[c]), iy = Math.round(a.py[c]);
-      if (ix < 0) ix = 0; else if (ix > S - cell) ix = S - cell;
-      if (iy < 0) iy = 0; else if (iy > S - cell) iy = S - cell;
-      const col = a.col[c];
-      let off = iy * S + ix;
-      for (let yy = 0; yy < cell; yy++) {
-        for (let xx = 0; xx < cell; xx++) a.u32[off + xx] = col;
-        off += S;
-      }
-    }
-    stageCtx.putImageData(a.image, 0, 0);
-    if (settledCount < n && elapsed < 15) {
-      state.animRAF = requestAnimationFrame(frame);
-    } else {
-      state.animating = false;
-      if (state.cur) { // crisp final frame
-        if (a.reverse) showRaw(state.cur); else paintMosaic(state.cur);
-      }
-      if (onEnd) onEnd();
-    }
+    if (a.done && !a.endFired) { a.endFired = true; if (onEnd) onEnd(); }
+    renderAnim(a);
+    state.animRAF = requestAnimationFrame(frame);
   };
   state.animRAF = requestAnimationFrame(frame);
 }
@@ -481,7 +558,8 @@ async function runCycle(idx, opts = {}) {
     buildAnim(rec, false);
     playAnim(() => afterPlay(rec, token, false));
   } else {
-    paintMosaic(rec); // show the finished result, morph plays on demand
+    buildAnim(rec, false, true); // start arrived: the result sits and breathes
+    playAnim();
   }
 }
 
@@ -590,6 +668,34 @@ function buildStrip() {
     ui.strip.appendChild(t);
   });
 }
+
+window.__dbg = () => {
+  const a = state.anim;
+  return a
+    ? { elapsed: +a.elapsed.toFixed(2), done: a.done, px0: a.px[0], sx0: a.sx[0], dx0: a.dx[0], vx0: a.vx[0], animating: state.animating }
+    : { anim: null, animating: state.animating, cur: !!state.cur };
+};
+window.__step = (steps) => {
+  const a = state.anim;
+  if (!a) return null;
+  const t0 = performance.now();
+  for (let i = 0; i < steps; i++) simStep(a);
+  const ms = performance.now() - t0;
+  let maxOff = 0, sumOff = 0, moving = 0, m = 0;
+  for (let c = 0; c < a.n; c += 16) {
+    const ox = a.px[c] - a.dx[c], oy = a.py[c] - a.dy[c];
+    const off = Math.sqrt(ox * ox + oy * oy);
+    if (off > maxOff) maxOff = off;
+    sumOff += off; m++;
+    if (Math.abs(a.vx[c]) + Math.abs(a.vy[c]) > 0.02) moving++;
+  }
+  return {
+    elapsed: +a.elapsed.toFixed(2), done: a.done,
+    msPerStep: +(ms / steps).toFixed(2),
+    maxOff: +maxOff.toFixed(2), avgOff: +(sumOff / m).toFixed(2),
+    movingFrac: +(moving / m).toFixed(2),
+  };
+};
 
 const gaben = new Image();
 gaben.onload = () => {
