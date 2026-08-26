@@ -332,7 +332,7 @@ function buildAnim(rec, reverse, arrived) {
     const gx = (c % N) * cell, gy = ((c / N) | 0) * cell; // assigned cell
     if (reverse) { a.sx[c] = gx; a.sy[c] = gy; a.dx[c] = hx; a.dy[c] = hy; }
     else { a.sx[c] = hx; a.sy[c] = hy; a.dx[c] = gx; a.dy[c] = gy; }
-    a.force[c] = 0.18 + Math.random() * 0.4; // wide ramp spread, the change stays slow
+    a.force[c] = 0.15 + Math.random() * 0.35; // wide ramp spread, the change stays slow
     a.col[c] = colors32[p];
   }
   // ghost underlays for both ends, so gaps between drifting squares stay in palette
@@ -387,11 +387,11 @@ function stopAnim() {
 // one 60Hz physics step: spring toward home, neighbor repulsion, damping
 function simStep(a) {
   const { S, cell, n } = a;
-  const MAX_V = cell * 1.15;
+  const MAX_V = cell * 0.8;
   const DAMP = 0.965;
   const R = cell * 1.35, R2 = R * R;
-  const REP = a.done ? 0.03 : 0.06; // the crowd calms down once arrived
-  const DONE_FAC = 60;              // arrived spring: firm hold, subtle jostle
+  const REP = a.done ? 0.02 : 0.06; // the crowd calms down once arrived
+  const DONE_FAC = 90;              // arrived spring: firm hold, subtle jostle
   const NEAR = cell * 2.5;
   a.elapsed += 1 / 60;
   buildBuckets(a);
@@ -401,14 +401,14 @@ function simStep(a) {
     const dist = Math.sqrt(ddx * ddx + ddy * ddy);
     if (dist > NEAR) far++;
     const t = a.elapsed * a.force[c];
-    let fac = Math.min(t * t * t, 1000);
+    let fac = Math.min(t * t * t, 200);
     if (a.done && dist < NEAR) fac = Math.min(fac, DONE_FAC);
     const g = fac / (S * 60);
     let vX = a.vx[c] + ddx * dist * g;
     let vY = a.vy[c] + ddy * dist * g;
     if (a.done) { // perpetual murmur so the settled image never goes still
-      vX += (Math.random() - 0.5) * 0.03;
-      vY += (Math.random() - 0.5) * 0.03;
+      vX += (Math.random() - 0.5) * 0.015;
+      vY += (Math.random() - 0.5) * 0.015;
     }
     // neighbor repulsion via the bucket grid
     const bx = (a.px[c] / a.bs) | 0, by = (a.py[c] / a.bs) | 0;
@@ -449,7 +449,7 @@ function simStep(a) {
     a.vx[c] = vX; a.vy[c] = vY;
     a.px[c] = nx; a.py[c] = ny;
   }
-  if (!a.done && (far <= n * 0.01 || a.elapsed > 15)) a.done = true;
+  if (!a.done && (far <= n * 0.01 || a.elapsed > 20)) a.done = true;
 }
 
 function renderAnim(a) {
