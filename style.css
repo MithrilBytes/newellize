@@ -42,18 +42,23 @@ main {
   background: var(--panel-2);
   image-rendering: pixelated;
 }
-#spin {
+#prog {
   position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 44px;
-  height: 44px;
-  border: 3px solid rgba(102, 192, 244, 0.25);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.9s linear infinite;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 46%;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+#progFill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.12s linear;
+}
 
 #strip { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 #strip canvas {

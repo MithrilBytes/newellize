@@ -3,7 +3,7 @@
 
 const $ = (id) => document.getElementById(id);
 const ui = {
-  stage: $('stage'), strip: $('strip'), spin: $('spin'),
+  stage: $('stage'), strip: $('strip'), prog: $('prog'), progFill: $('progFill'),
   res: $('resSel'), prox: $('proxSlider'), proxOut: $('proxOut'),
   auto: $('autoChk'), play: $('playBtn'), reverse: $('reverseChk'), png: $('pngBtn'), vid: $('vidBtn'),
   stats: $('stats'),
@@ -13,7 +13,12 @@ const MAX_COLOR_ERR = 9 * 65025; // weights 2+4+3 at delta 255
 const HOLD_MS = 3200;
 const BUDGET_MS = 8000;
 
-const setSpin = (on) => { ui.spin.hidden = !on; };
+let liveRunId = 0; // the solve whose progress is on screen
+const setSolve = (on) => {
+  ui.prog.hidden = !on;
+  if (on) ui.progFill.style.width = '0%';
+  else liveRunId = 0;
+};
 
 // ---------------------------------------------------------------- samples
 function seededRnd(seed) {
@@ -221,7 +226,7 @@ function ensureWorker() {
   worker = new Worker(workerURL);
   worker.onmessage = onWorkerMsg;
   worker.onerror = (e) => {
-    setSpin(false);
+    setSolve(false);
     ui.stats.textContent = `optimizer crashed: ${e.message || 'unknown error'}`;
   };
 }
@@ -240,7 +245,8 @@ function startRun(idx, live) {
     setStageSize(rec);
     stageCtx.fillStyle = '#16202d';
     stageCtx.fillRect(0, 0, rec.S, rec.S);
-    setSpin(true);
+    setSolve(true);
+    liveRunId = runId;
   }
   worker.postMessage({
     cmd: 'start', runId, N, src, tgt: tgtSmall(N),
@@ -255,6 +261,9 @@ function onWorkerMsg(e) {
   if (!rec) return; // stale
   rec.perm = m.perm;
   rec.lastStats = m;
+  if (m.runId === liveRunId) {
+    ui.progFill.style.width = `${Math.round((m.progress || 0) * 100)}%`;
+  }
   if (m.type === 'done') { runs.delete(m.runId); rec.resolve(rec); }
 }
 
@@ -321,10 +330,11 @@ function buildAnim(rec, reverse, arrived) {
     dx: new Float32Array(n), dy: new Float32Array(n),
     px: new Float32Array(n), py: new Float32Array(n),
     vx: new Float32Array(n), vy: new Float32Array(n),
-    force: new Float32Array(n),
+    force: new Float32Array(n), mv: new Float32Array(n),
     col: new Uint32Array(n),
     baseStart: new Uint32Array(S * S), baseEnd: new Uint32Array(S * S),
-    reverse: !!reverse, done: false, elapsed: 0, S, cell, n,
+    baseMix: new Uint32Array(S * S),
+    reverse: !!reverse, done: false, doneAt: 0, elapsed: 0, S, cell, n,
   };
   for (let c = 0; c < n; c++) {
     const p = perm[c];
@@ -333,6 +343,7 @@ function buildAnim(rec, reverse, arrived) {
     if (reverse) { a.sx[c] = gx; a.sy[c] = gy; a.dx[c] = hx; a.dy[c] = hy; }
     else { a.sx[c] = hx; a.sy[c] = hy; a.dx[c] = gx; a.dy[c] = gy; }
     a.force[c] = 0.15 + Math.random() * 0.35; // wide ramp spread, the change stays slow
+    a.mv[c] = cell * (0.65 + Math.random() * 0.3); // per pixel top speed, no lockstep glide
     a.col[c] = colors32[p];
   }
   // ghost underlays for both ends, so gaps between drifting squares stay in palette
@@ -340,7 +351,7 @@ function buildAnim(rec, reverse, arrived) {
   splatBase(a.baseEnd, a.dx, a.dy, a.col, n, cell, S);
   if (arrived) {
     a.px.set(a.dx); a.py.set(a.dy);
-    a.done = true; a.elapsed = 8;
+    a.done = true; a.elapsed = 8; a.doneAt = 0; // underlay already fully crossfaded
   } else {
     a.px.set(a.sx); a.py.set(a.sy);
   }
@@ -384,15 +395,18 @@ function stopAnim() {
   state.animating = false;
 }
 
-// one 60Hz physics step: spring toward home, neighbor repulsion, damping
+/*
+ * One 60Hz physics step: spring toward home, neighbor repulsion, damping.
+ * There is no global mode switch. Each particle blends between a flight
+ * regime and a settled regime by its own distance from home (wc), so speeds,
+ * crowd pressure, and the murmur all change continuously per pixel.
+ */
 function simStep(a) {
   const { S, cell, n } = a;
-  const MAX_V = cell * 0.8;
   const DAMP = 0.965;
   const R = cell * 1.35, R2 = R * R;
-  const REP = a.done ? 0.02 : 0.06; // the crowd calms down once arrived
-  const DONE_FAC = 90;              // arrived spring: firm hold, subtle jostle
   const NEAR = cell * 2.5;
+  const SETTLE_R = cell * 3; // regime blend radius
   a.elapsed += 1 / 60;
   buildBuckets(a);
   let far = 0;
@@ -400,17 +414,19 @@ function simStep(a) {
     const ddx = a.dx[c] - a.px[c], ddy = a.dy[c] - a.py[c];
     const dist = Math.sqrt(ddx * ddx + ddy * ddy);
     if (dist > NEAR) far++;
+    const wc = dist >= SETTLE_R ? 1 : dist / SETTLE_R; // 1 flight, 0 settled
     const t = a.elapsed * a.force[c];
-    let fac = Math.min(t * t * t, 200);
-    if (a.done && dist < NEAR) fac = Math.min(fac, DONE_FAC);
+    let fac = Math.min(t * t * t, 90 + 110 * wc);
     const g = fac / (S * 60);
     let vX = a.vx[c] + ddx * dist * g;
     let vY = a.vy[c] + ddy * dist * g;
-    if (a.done) { // perpetual murmur so the settled image never goes still
-      vX += (Math.random() - 0.5) * 0.015;
-      vY += (Math.random() - 0.5) * 0.015;
+    const mur = 0.015 * (1 - wc); // murmur fades in as a pixel settles
+    if (mur > 0) {
+      vX += (Math.random() - 0.5) * mur;
+      vY += (Math.random() - 0.5) * mur;
     }
-    // neighbor repulsion via the bucket grid
+    // neighbor repulsion via the bucket grid, softer for settled pixels
+    const repk = 0.02 + 0.04 * wc;
     const bx = (a.px[c] / a.bs) | 0, by = (a.py[c] / a.bs) | 0;
     for (let oy = -1; oy <= 1; oy++) {
       const yb = by + oy;
@@ -431,7 +447,7 @@ function simStep(a) {
             vY += (Math.random() - 0.5) * 0.3;
           } else {
             const d = Math.sqrt(d2);
-            const kf = REP * (R - d) / d;
+            const kf = repk * (R - d) / d;
             vX += rx * kf;
             vY += ry * kf;
           }
@@ -439,8 +455,9 @@ function simStep(a) {
       }
     }
     vX *= DAMP; vY *= DAMP;
+    const mv = a.mv[c];
     const sp = Math.sqrt(vX * vX + vY * vY);
-    if (sp > MAX_V) { const k = MAX_V / sp; vX *= k; vY *= k; }
+    if (sp > mv) { const k = mv / sp; vX *= k; vY *= k; }
     let nx = a.px[c] + vX, ny = a.py[c] + vY;
     if (nx < 0) { nx = 0; if (vX < 0) vX = 0; }
     else if (nx > S - cell) { nx = S - cell; if (vX > 0) vX = 0; }
@@ -449,12 +466,32 @@ function simStep(a) {
     a.vx[c] = vX; a.vy[c] = vY;
     a.px[c] = nx; a.py[c] = ny;
   }
-  if (!a.done && (far <= n * 0.01 || a.elapsed > 20)) a.done = true;
+  if (!a.done && (far <= n * 0.01 || a.elapsed > 20)) {
+    a.done = true;
+    a.doneAt = a.elapsed;
+  }
 }
 
 function renderAnim(a) {
   const { S, cell, n } = a;
-  a.u32.set(a.done ? a.baseEnd : a.baseStart);
+  // underlay crossfades over 1.5s at arrival instead of popping
+  const blend = a.done ? Math.min(1, (a.elapsed - a.doneAt) / 1.5) : 0;
+  if (blend <= 0) {
+    a.u32.set(a.baseStart);
+  } else if (blend >= 1) {
+    a.u32.set(a.baseEnd);
+  } else {
+    const t8 = (blend * 256) | 0, inv = 256 - t8;
+    const b0 = a.baseStart, b1 = a.baseEnd, mix = a.baseMix;
+    for (let i = 0; i < mix.length; i++) {
+      const c0 = b0[i], c1 = b1[i];
+      const r = (((c0 & 0xff) * inv + (c1 & 0xff) * t8) >> 8) & 0xff;
+      const gch = ((((c0 >> 8) & 0xff) * inv + ((c1 >> 8) & 0xff) * t8) >> 8) & 0xff;
+      const bch = ((((c0 >> 16) & 0xff) * inv + ((c1 >> 16) & 0xff) * t8) >> 8) & 0xff;
+      mix[i] = 0xff000000 | (bch << 16) | (gch << 8) | r;
+    }
+    a.u32.set(mix);
+  }
   for (let c = 0; c < n; c++) {
     let ix = Math.round(a.px[c]), iy = Math.round(a.py[c]);
     if (ix < 0) ix = 0; else if (ix > S - cell) ix = S - cell;
@@ -546,7 +583,7 @@ async function runCycle(idx, opts = {}) {
   } else {
     setStageSize(rec);
   }
-  setSpin(false);
+  setSolve(false);
 
   state.cur = rec;
   updateStats(rec.lastStats);
